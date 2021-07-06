@@ -32,7 +32,7 @@
 
 > cd ../..
 >
-> python bert_reconstruction.py \
+> python teacher/bert_reconstruction.py \
 >
 > ​    --input-dir='./data/imdb/processed-dev' \
 >
