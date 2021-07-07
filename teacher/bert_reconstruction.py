@@ -356,7 +356,10 @@ if __name__ == "__main__":
 
     # get out representations
     parser.add_argument(
-        "--get-reps", action="store_true", help="Get out document representations."
+        "--get-reps",
+        action="store_true",
+        default=False,
+        help="Get out document representations."
     )
     parser.add_argument(
         "--checkpoint-folder-pattern",
@@ -393,18 +396,22 @@ if __name__ == "__main__":
         "than this will be truncated, sequences shorter will be padded.",
     )
     parser.add_argument(
-        "--train", action="store_true",        default=True,
- help="Whether to run training."
+        "--do-train",
+        action="store_true",
+        default=False,
+        help="Whether to run training."
     )
     parser.add_argument(
-        "--do-eval",         default=True,
-action="store_true", help="Whether to run eval on the dev set."
+        "--do-eval",
+        action="store_true",
+        default=False,
+        help="Whether to run eval on the dev set."
     )
 
     parser.add_argument(
         "--evaluate-during-training",
-        default=True,
         action="store_true",
+        default=False,
         help="Run evaluation during training at each logging step."
     )
 
@@ -471,7 +478,7 @@ action="store_true", help="Whether to run eval on the dev set."
         original_args = torch.load(Path(args.output_dir, "training_args.bin"))
 
         # only carry over the reloading arguments
-        original_args.train = False
+        original_args.do_train = False
         original_args.get_reps = True
         original_args.output_dir = args.output_dir
         original_args.checkpoint_folder_pattern = args.checkpoint_folder_pattern
@@ -549,7 +556,7 @@ action="store_true", help="Whether to run eval on the dev set."
         dev_dataset = None
 
     # train!
-    if args.train:
+    if args.do_train:
         model = DistilBertForDocReconstruction.from_pretrained(
             args.bert_model,
             num_labels=word_counts.shape[1],
