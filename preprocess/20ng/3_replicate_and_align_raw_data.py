@@ -17,6 +17,11 @@ from tqdm import tqdm
 
 from utils import load_sparse, save_sparse, save_jsonlist, save_json
 
+import nltk
+nltk.download('wordnet')
+nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger')
+
 tag_to_wn = {
     "NN": wn.NOUN,
     "NNS": wn.NOUN,

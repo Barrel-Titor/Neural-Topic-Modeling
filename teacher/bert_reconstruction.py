@@ -3,31 +3,23 @@ import json
 import random
 import logging
 from pathlib import Path
+from scipy import sparse
+# from preprocess.utils import load_sparse, save_sparse, load_json, save_json
 
 import numpy as np
-from scipy import sparse
 import torch
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
+# Multi-GPU
+from torch.utils.data.distributed import DistributedSampler
 from transformers import (
     WEIGHTS_NAME,
     AdamW,
-    DistilBertConfig,
-    DistilBertTokenizer,
-    DistilBertForSequenceClassification,
+    BertConfig,
+    BertTokenizer,
+    BertForSequenceClassification,
     get_linear_schedule_with_warmup,
 )
 from tqdm import tqdm, trange
-
-logger = logging.getLogger(__name__)
-
-def set_seed(args):
-    """
-    Taken from 
-    github.com/huggingface/transformers/blob/master/examples/mm-imdb/run_mmimdb.py
-    """
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
 
 
 def load_sparse(input_filename):
@@ -50,13 +42,27 @@ def save_sparse(sparse_matrix, output_filename):
     shape = coo.shape
     np.savez(output_filename, row=row, col=col, data=data, shape=shape)
 
+
 def load_json(fpath):
-    with open(fpath, "r") as infile:
-        return json.load(infile)
+    with open(fpath, 'r') as i:
+        return json.load(i)
+
 
 def save_json(obj, fpath):
-    with open(fpath, "w") as outfile:
-        return json.dump(obj, outfile)
+    with open(fpath, 'w') as o:
+        json.dump(obj, o)
+
+
+def set_seed(args):
+    """
+    Taken from 
+    github.com/huggingface/transformers/blob/master/examples/mm-imdb/run_mmimdb.py
+    """
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
 
 class DocDataset(Dataset):
     """
@@ -108,7 +114,8 @@ class DocDataset(Dataset):
         word_counts = torch.stack([c for _, _, c in batch])
         return input_ids, attention_masks, word_counts
 
-class DistilBertForDocReconstruction(DistilBertForSequenceClassification):
+
+class BertForDocReconstruction(BertForSequenceClassification):
     def __init__(self, config, softmax_temp=1):
         super().__init__(config)
         self.softmax_temp = softmax_temp
@@ -137,7 +144,9 @@ def train(args, train_dataset, model, tokenizer, eval_dataset=None):
     https://github.com/huggingface/transformers/blob/master/examples/mm-imdb/run_mmimdb.py
     """
 
-    train_sampler = RandomSampler(train_dataset)
+    # Multi-GPU
+    # train_sampler = RandomSampler(train_dataset)
+    train_sampler = DistributedSampler(train_dataset)
     train_dataloader = DataLoader(
         train_dataset,
         sampler=train_sampler,
@@ -156,7 +165,10 @@ def train(args, train_dataset, model, tokenizer, eval_dataset=None):
             "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
             "weight_decay": args.weight_decay,
         },
-        {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
+        {
+            "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
+            "weight_decay": 0.0
+        },
     ]
 
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
@@ -165,7 +177,9 @@ def train(args, train_dataset, model, tokenizer, eval_dataset=None):
     )
 
     # Train
-    logger.info("***** Running training *****")
+    # Multi-GPU
+    if torch.distributed.get_rank() == 0:
+        logger.info("***** Running training *****")
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
     best_ppl, n_no_improve = np.inf, 0
@@ -173,7 +187,9 @@ def train(args, train_dataset, model, tokenizer, eval_dataset=None):
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch")
     set_seed(args)  # Added here for reproductibility
 
-    for _ in train_iterator:
+    for epoch in train_iterator:
+        # Multi-GPU
+        train_dataloader.sampler.set_epoch(epoch)
         epoch_iterator = tqdm(train_dataloader, desc="Iteration")
         for step, batch in enumerate(epoch_iterator):
             model.train()
@@ -201,38 +217,42 @@ def train(args, train_dataset, model, tokenizer, eval_dataset=None):
                 model.zero_grad()
                 global_step += 1
 
-                if args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                    logs = {}
-                    if eval_dataset is not None and args.evaluate_during_training:           
-                        results = evaluate(args, eval_dataset, model, tokenizer)
+                # Multi-GPU
+                if torch.distributed.get_rank() == 0:
+                    if args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                        logs = {}
+                        if eval_dataset is not None and args.evaluate_during_training:
+                            results = evaluate(args, eval_dataset, model, tokenizer)
 
-                        logger.info(f"Evaluation results: ")
-                        with open(Path(args.output_dir, "eval_results.txt"), "a") as writer:
-                            for k, v in results.items():
-                                logger.info(f"{k}: {v:0.4f}")
-                                writer.write(f"{k}: {v:0.4f}\n")
-                                logs[f"eval_{k}"] = v
+                            logger.info(f"Evaluation results: ")
+                            with open(Path(args.output_dir, "eval_results.txt"), "a") as writer:
+                                for k, v in results.items():
+                                    logger.info(f"{k}: {v:0.4f}")
+                                    writer.write(f"{k}: {v:0.4f}\n")
+                                    logs[f"eval_{k}"] = v
 
-                    loss_scalar = (tr_loss - logging_loss) / args.logging_steps
-                    learning_rate_scalar = scheduler.get_last_lr()[0]
-                    logs["learning_rate"] = learning_rate_scalar
-                    logs["loss"] = loss_scalar
-                    logging_loss = tr_loss
+                        loss_scalar = (tr_loss - logging_loss) / args.logging_steps
+                        learning_rate_scalar = scheduler.get_last_lr()[0]
+                        logs["learning_rate"] = learning_rate_scalar
+                        logs["loss"] = loss_scalar
+                        logging_loss = tr_loss
 
-                    #print(json.dumps({**logs, **{"step": global_step}}))
-                    #for k, v in {**logs, **{"step": global_step}}.items():
+                        #print(json.dumps({**logs, **{"step": global_step}}))
+                        #for k, v in {**logs, **{"step": global_step}}.items():
 
+                    if args.save_steps > 0 and global_step % args.save_steps == 0:
+                        # Save model checkpoint
+                        output_dir = Path(args.output_dir, f"checkpoint-{global_step}")
+                        if not output_dir.exists():
+                            output_dir.mkdir(parents=True)
 
-                if args.save_steps > 0 and global_step % args.save_steps == 0:
-                    # Save model checkpoint
-                    output_dir = Path(args.output_dir, f"checkpoint-{global_step}")
-                    if not output_dir.exists()  :
-                        output_dir.mkdir(parents=True)
-                    
-                    torch.save(model.state_dict(), Path(output_dir, WEIGHTS_NAME))
-                    torch.save(args, Path(output_dir, "training_args.bin"))
-                    logger.info(f"Saving model checkpoint to {output_dir}")
+                        # Multi-GPU
+                        # torch.save(model.state_dict(), Path(output_dir, WEIGHTS_NAME))
+                        torch.save(model.module.state_dict(), Path(output_dir, WEIGHTS_NAME))
+                        torch.save(args, Path(output_dir, "training_args.bin"))
+                        logger.info(f"Saving model checkpoint to {output_dir}")
         
+        # Early stopping
         if eval_dataset is not None:
             results = evaluate(args, eval_dataset, model, tokenizer)
             if results["perplexity"] < best_ppl:
@@ -246,6 +266,7 @@ def train(args, train_dataset, model, tokenizer, eval_dataset=None):
                 break
 
     return global_step, tr_loss / global_step
+
 
 def evaluate(
     args,
@@ -268,7 +289,9 @@ def evaluate(
         collate_fn=eval_dataset.collate
     )
 
-    logger.info("***** Running evaluation *****")
+    # Multi-GPU
+    if torch.distributed.get_rank() == 0:
+        logger.info("***** Running evaluation *****")
     doc_sums = np.array(eval_dataset.word_counts.sum(axis=1), dtype=np.float32).reshape(-1)
     eval_loss = []
     eval_probs = []
@@ -318,6 +341,10 @@ def evaluate(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
+    # Multi-GPU
+    # 负责创建 args.local_rank 变量，并接受 torch.distributed.launch 注入的值
+    parser.add_argument("--local_rank", type=int, default=-1)
+
     parser.add_argument(
         "--input-dir",
         help="Directory of processed data. All data must be the same size/order as the jsonlist file!",
@@ -344,12 +371,11 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--bert-model",
-        default="distilbert-base-uncased",
+        default="bert-base-multilingual-uncased",
         help="BERT model to be used"
     )
     parser.add_argument(
         "--output-dir",
-       
         required=True,
         help="Directory for model predictions and checkpoints"
     )
@@ -387,6 +413,12 @@ if __name__ == "__main__":
         default=None,
         type=str,
         help="Where do you want to store the pre-trained models downloaded from s3",
+    )
+    parser.add_argument(
+        "--model-dir",
+        default='./pretrained_model/bert_multilingual/',
+        type=str,
+        help="Where do you want to load the pre-trained models from local",
     )
     parser.add_argument(
         "--max-seq-length",
@@ -488,16 +520,28 @@ if __name__ == "__main__":
         original_args.batch_size = args.batch_size
         original_args.no_dev = args.no_dev
 
-        args = original_args    
+        args = original_args
 
-    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ##############################
+    # Multi-GPU
+    # DDP backend初始化
+    # 每个进程根据自己的local_rank设置应该使用的GPU
+    # args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.cuda.set_device(args.local_rank)
+    args.device = torch.device('cuda', args.local_rank)
+    # 初始化分布式环境，主要用来帮助进程间通信
+    torch.distributed.init_process_group(backend='nccl')
+    ##############################
 
-    # set up logging
+    # set up logger
+    # only master process do logger
     logging.basicConfig(
-        format="%(asctime)s - %(name)s -   %(message)s",
+        format="%(asctime)s - %(name)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         level=logging.INFO,
-    )    
+        filename='teacher.log',
+    )
+    logger = logging.getLogger(__name__)
 
     # set seed
     set_seed(args)
@@ -505,22 +549,25 @@ if __name__ == "__main__":
     # load in the data, eliminating any empty documents
     vocab = load_json(Path(args.input_dir, args.vocab_fname))
     data = [
-        json.loads(l)["text"]  for l in open(Path(args.input_dir, args.train_text_fname))
+        json.loads(l)["text"] for l in open(Path(args.input_dir, args.train_text_fname))
     ]
     word_counts = load_sparse(Path(args.input_dir, args.train_counts_fname))
     ids = load_json(Path(args.input_dir, args.train_ids_fname))
     
-    tokenizer = DistilBertTokenizer.from_pretrained(
-        args.bert_model, cache_dir=args.cache_dir
+    tokenizer = BertTokenizer.from_pretrained(
+        # args.bert_model,
+        args.model_dir,
+        # cache_dir=args.cache_dir
     )
     
     # create output directory
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     # initialize the model and tokenizer
-    # TODO: add support for other models
     # split up into train/dev if desired
-    logger.info(f"Loading and tokenizing data")
+    # Multi-GPU
+    if torch.distributed.get_rank() == 0:
+        logger.info(f"Loading and tokenizing data")
     if not args.no_dev and args.dev_split > 0:
         from sklearn.model_selection import train_test_split
         args.dev_text_fname = None # do not load any dev data
@@ -534,57 +581,74 @@ if __name__ == "__main__":
         dev_dataset = DocDataset(dev_data, tokenizer, dev_word_counts)
         
         # save the splits for posterity
-        torch.save(train_dataset.examples, Path(args.output_dir, "train.data.pt"))
-        torch.save(dev_dataset.examples, Path(args.output_dir, "dev.data.pt"))
-        save_sparse(train_word_counts, Path(args.output_dir, "train.npz"))
-        save_sparse(dev_word_counts, Path(args.output_dir, "dev.npz"))
-        save_json(train_ids, Path(args.output_dir, "train.ids.json"))
-        save_json(dev_ids, Path(args.output_dir, "dev.ids.json"))
+        # Multi-GPU
+        if torch.distributed.get_rank() == 0:
+            torch.save(train_dataset.examples, Path(args.output_dir, "train.data.pt"))
+            torch.save(dev_dataset.examples, Path(args.output_dir, "dev.data.pt"))
+            save_sparse(train_word_counts, Path(args.output_dir, "train.npz"))
+            save_sparse(dev_word_counts, Path(args.output_dir, "dev.npz"))
+            save_json(train_ids, Path(args.output_dir, "train.ids.json"))
+            save_json(dev_ids, Path(args.output_dir, "dev.ids.json"))
+            save_json(vocab, Path(args.output_dir, "train.vocab.json"))
 
-        save_json(vocab, Path(args.output_dir, "train.vocab.json"))
     if not args.no_dev and args.dev_text_fname is not None:
         dev_data = [
-            json.loads(l)["text"]  for l in open(Path(args.input_dir, args.dev_text_fname))
+            json.loads(l)["text"] for l in open(Path(args.input_dir, args.dev_text_fname))
         ]
         dev_word_counts = load_sparse(Path(args.input_dir, args.dev_counts_fname))
         dev_ids = load_json(Path(args.input_dir, args.dev_ids_fname))
 
         train_dataset = DocDataset(data, tokenizer, word_counts)
         dev_dataset = DocDataset(dev_data, tokenizer, dev_word_counts)
+
     if args.no_dev:
         train_dataset = DocDataset(data, tokenizer, word_counts)
         dev_dataset = None
 
     # train!
     if args.do_train:
-        model = DistilBertForDocReconstruction.from_pretrained(
-            args.bert_model,
+        model = BertForDocReconstruction.from_pretrained(
+            # args.bert_model,
+            args.model_dir,
             num_labels=word_counts.shape[1],
             softmax_temp=args.softmax_temp,
-            cache_dir=args.cache_dir,
+            # cache_dir=args.cache_dir,
         )
         model.to(args.device)
+        ##############################
+        # Multi-GPU
+        model = torch.nn.parallel.DistributedDataParallel(
+            model,
+            device_ids=[args.local_rank],
+            output_device=args.local_rank,
+        )
+        ##############################
 
         global_step, tr_loss = train(args, train_dataset, model, tokenizer, dev_dataset)
-        logger.info(f"Global step: {global_step}, average_loss: {tr_loss:0.4f}")
 
-        logger.info(f"Saving checkpoints to {args.output_dir}")
+        # Multi-GPU
+        if torch.distributed.get_rank() == 0:
+            logger.info(f"Global step: {global_step}, average_loss: {tr_loss:0.4f}")
 
-        torch.save(model.state_dict(), Path(args.output_dir, WEIGHTS_NAME))
-        tokenizer.save_pretrained(args.output_dir)
+            logger.info(f"Saving checkpoints to {args.output_dir}")
+            # torch.save(model.state_dict(), Path(args.output_dir, WEIGHTS_NAME))
+            torch.save(model.module.state_dict(), Path(args.output_dir, WEIGHTS_NAME))
+            tokenizer.save_pretrained(args.output_dir)
+            torch.save(args, Path(args.output_dir, "training_args.bin"))
 
-        torch.save(args, Path(args.output_dir, "training_args.bin"))
-
-    if args.get_reps:
-        config = DistilBertConfig.from_pretrained(
-            args.bert_model,
+    # Get out document representations
+    # Multi-GPU
+    if args.get_reps and torch.distributed.get_rank() == 0:
+        config = BertConfig.from_pretrained(
+            # args.bert_model,
+            args.model_dir,
             num_labels=word_counts.shape[1],
             output_hidden_states=True
         )
         
         checkpoint_dirs = list(Path(args.output_dir).glob(args.checkpoint_folder_pattern))
         for dir in tqdm(checkpoint_dirs, desc="Checkpoints"):
-            model = DistilBertForDocReconstruction(config, softmax_temp=args.softmax_temp)
+            model = BertForDocReconstruction(config, softmax_temp=args.softmax_temp)
             model.to(args.device)
             model.load_state_dict(torch.load(Path(dir, "pytorch_model.bin")))
             train_results = evaluate(

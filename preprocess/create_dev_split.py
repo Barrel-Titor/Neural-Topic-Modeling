@@ -6,19 +6,21 @@ from sklearn.model_selection import train_test_split
 import utils
 
 if __name__ == "__main__":
+    indir = Path("../data/20ng")
     outdir = Path("processed-dev")
+    outdir = Path(indir, outdir)
     outdir.mkdir(exist_ok=True)
 
     # copy over the train files
-    shutil.copy("train.jsonlist", Path(outdir, "train.jsonlist"))
-    shutil.copy("processed/train.npz", Path(outdir, "train.npz"))
-    shutil.copy("processed/train.ids.json", Path(outdir, "train.ids.json"))
-    shutil.copy("processed/train.vocab.json", Path(outdir, "train.vocab.json"))
+    shutil.copy(Path(indir, "train.jsonlist"), Path(outdir, "train.jsonlist"))
+    shutil.copy(Path(indir, "processed/train.npz"), Path(outdir, "train.npz"))
+    shutil.copy(Path(indir, "processed/train.ids.json"), Path(outdir, "train.ids.json"))
+    shutil.copy(Path(indir, "processed/train.vocab.json"), Path(outdir, "train.vocab.json"))
 
     # read in test
-    test_jsonlist = utils.load_jsonlist("test.jsonlist")
-    test_counts = utils.load_sparse("processed/test.npz")
-    test_ids = utils.load_json("processed/test.ids.json")
+    test_jsonlist = utils.load_jsonlist(Path(indir, "test.jsonlist"))
+    test_counts = utils.load_sparse(Path(indir, "processed/test.npz"))
+    test_ids = utils.load_json(Path(indir, "processed/test.ids.json"))
 
     # split into a dev set
     dev_jsonlist, test_jsonlist, dev_counts, test_counts, dev_ids, test_ids = (

@@ -10,8 +10,8 @@ def onehot(data, min_length):
 
 if __name__ == "__main__":
     # load the data
-    train = np.load("original/train.txt.npy")
-    test = np.load("original/test.txt.npy")
+    train = np.load("original/train.txt.npy", allow_pickle=True, encoding='latin1')
+    test = np.load("original/test.txt.npy", allow_pickle=True, encoding='latin1')
 
     with open("original/vocab.pkl", "rb") as infile:
         vocab = pickle.load(infile)
@@ -31,6 +31,6 @@ if __name__ == "__main__":
     np.savetxt("intermediate/test.txt", test)
 
     with open("intermediate/vocab_dict.json", "w") as outfile:
-        json.dump(vocab, outfile, encoding="utf-8")
+        json.dump(vocab, outfile)
 
 
