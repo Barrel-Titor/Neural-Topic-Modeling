@@ -730,10 +730,12 @@ class torchScholar(nn.Module):
             NL += -(X * (X_recon + 1e-10).log()).sum(1)
 
         # knowledge distillation
+        # w_hat
         if X_soft_recon is not None:
             alpha = self.doc_reconstruction_weight
             t = self.doc_reconstruction_temp
-            
+
+            # (w_d)^BAT
             X_soft = torch.softmax(DR / t, dim=-1) * X.sum(1, keepdim=True) # multiply probabilities by counts
             X_soft = X_soft * (X_soft > self.doc_reconstruction_min_count).float()
 
