@@ -118,6 +118,7 @@ class BertForDocReconstruction(BertForSequenceClassification):
         Identical signature to the parent class
         """
         labels = kwargs.pop("labels")
+        # TODO: check output
         outputs = super().forward(*args, **kwargs, labels=None)
         probs = torch.softmax(outputs[0] / self.softmax_temp, dim=1)
         outputs = (probs,) + outputs
@@ -178,6 +179,7 @@ def train(args, train_dataset, model, tokenizer, eval_dataset=None):
         for step, batch in enumerate(epoch_iterator):
             model.train()
             input_ids, attention_mask, word_counts = [b.to(args.device) for b in batch]
+            # TODO: check output size
             loss, probs, _ = model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -344,7 +346,8 @@ if __name__ == "__main__":
 
     parser.add_argument(
         "--bert-model",
-        default="bert-base-uncased",
+        default="bert-base-multilingual-cased",
+        # default="./pretrained_model/bert_multilingual_cased/",
         help="BERT model to be used"
     )
     parser.add_argument(
@@ -386,12 +389,6 @@ if __name__ == "__main__":
         default=None,
         type=str,
         help="Where do you want to store the pre-trained models downloaded from s3",
-    )
-    parser.add_argument(
-        "--model-dir",
-        default='./pretrained_model/bert_multilingual/',
-        type=str,
-        help="Where do you want to load the pre-trained models from local",
     )
     parser.add_argument(
         "--max-seq-length",
@@ -505,14 +502,13 @@ if __name__ == "__main__":
     # load in the data, eliminating any empty documents
     vocab = load_json(Path(args.input_dir, args.vocab_fname))
     data = [
-        json.loads(l)["text"]  for l in open(Path(args.input_dir, args.train_text_fname))
+        json.loads(l)["text"] for l in open(Path(args.input_dir, args.train_text_fname))
     ]
     word_counts = load_sparse(Path(args.input_dir, args.train_counts_fname))
     ids = load_json(Path(args.input_dir, args.train_ids_fname))
     
     tokenizer = BertTokenizer.from_pretrained(
-        # args.bert_model,
-        args.model_dir,
+        args.bert_model,
         cache_dir=args.cache_dir
     )
     
@@ -560,8 +556,7 @@ if __name__ == "__main__":
     # train!
     if args.do_train:
         model = BertForDocReconstruction.from_pretrained(
-            # args.bert_model,
-            args.model_dir,
+            args.bert_model,
             num_labels=word_counts.shape[1],
             softmax_temp=args.softmax_temp,
             cache_dir=args.cache_dir,
@@ -580,8 +575,7 @@ if __name__ == "__main__":
 
     if args.get_reps:
         config = BertConfig.from_pretrained(
-            # args.bert_model,
-            args.model_dir,
+            args.bert_model,
             num_labels=word_counts.shape[1],
             output_hidden_states=True
         )
