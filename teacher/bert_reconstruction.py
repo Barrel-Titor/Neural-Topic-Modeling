@@ -118,7 +118,7 @@ class BertForDocReconstruction(BertForSequenceClassification):
         Identical signature to the parent class
         """
         labels = kwargs.pop("labels")
-        # TODO: check output
+        # TODO: ask for help
         outputs = super().forward(*args, **kwargs, labels=None)
         probs = torch.softmax(outputs[0] / self.softmax_temp, dim=1)
         outputs = (probs,) + outputs
