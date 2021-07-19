@@ -14,8 +14,8 @@
 import numpy as np
 from scipy.special import logit, expit
 
-import mxnet as mx
-from mxnet.gluon import nn
+# import mxnet as mx
+# from mxnet.gluon import nn
 
 from core import ENet, DNet
 

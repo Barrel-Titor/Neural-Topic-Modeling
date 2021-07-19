@@ -25,7 +25,7 @@ mpl.use('Agg')
 import sys
 sys.path.append('../')
 
-import mxnet as mx
+# import mxnet as mx
 mx.random.seed(42)#int(time.time()))
 
 from utils import (

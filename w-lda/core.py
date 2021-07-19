@@ -18,8 +18,8 @@ import matplotlib.pyplot as plt
 
 from sklearn.metrics import log_loss, v_measure_score
 
-import mxnet as mx
-from mxnet import gluon, io
+# import mxnet as mx
+# from mxnet import gluon, io
 
 
 # import misc as nm
@@ -510,7 +510,8 @@ class Compute(object):
         self.Dec = Dec
         self.Dis_y = Dis_y
         self.args = args
-        self.model_ctx = Enc.model_ctx
+        # self.model_ctx = Enc.model_ctx
+        self.device = Enc.device
         self.ndim_y = args['ndim_y']
 
         weights_enc = Enc.collect_params()
