@@ -54,7 +54,9 @@ def mmd_loss(x, y, device, t=0.1, kernel='diffusion'):
         sum_yy = sum_yy / (n * y.shape[0])
     else:
         qx = torch.sqrt(torch.clamp(x, eps, 1))
-        qy = torch.sqrt(torch.clamp(y, eps, 1))
+        # print("qx.dtype: {}".format(qx.dtype))
+        qy = torch.sqrt(torch.clamp(y, eps, 1)).to(torch.float64)
+        # print("qy.dtype: {}".format(qy.dtype))
         xx = torch.mm(qx, qx.T)
         yy = torch.mm(qy, qy.T)
         xy = torch.mm(qx, qy.T)
@@ -120,7 +122,7 @@ class Unsupervised(Compute):
             y_noise = torch.as_tensor(y_noise, device=device)
             y_onehot_u_softmax = (1 - self.args['latent_noise']) * y_onehot_u_softmax + self.args[
                 'latent_noise'] * y_noise
-        x_reconstruction_u = self.Dec(y_onehot_u_softmax)
+        x_reconstruction_u = self.Dec(y_onehot_u_softmax.float())
 
         if self.args['use_kd']:
             kd_logits = F.log_softmax(x_reconstruction_u / t)
@@ -137,6 +139,8 @@ class Unsupervised(Compute):
             logits = F.log_softmax(x_reconstruction_u)
             loss_reconstruction = torch.mean(torch.sum(- docs * logits, dim=1))
             loss_total = loss_reconstruction * self.args['recon_alpha']
+            print("### loss_total-1 ###")
+            print(loss_total.size())
 
         ### mmd phase ###
         if self.args['adverse']:
@@ -144,6 +148,8 @@ class Unsupervised(Compute):
             y_fake = F.softmax(y_fake)
             loss_mmd = mmd_loss(y_true, y_fake, device=device, t=self.args['kernel_alpha'])
             loss_total = loss_total + loss_mmd
+            print("### loss_total-2 ###")
+            print(loss_total.size())
 
         if self.args['l2_alpha'] > 0:
             loss_total = loss_total + self.args['l2_alpha'] * torch.mean(torch.sum(torch.square(y_onehot_u), dim=1))
@@ -151,6 +157,8 @@ class Unsupervised(Compute):
         self.optimizer_enc.zero_grad()
         self.optimizer_dec.zero_grad()
 
+        print("### loss_total-3 ###")
+        print(loss_total.size())
         loss_total.backward()
 
         self.optimizer_enc.step()
@@ -237,7 +245,7 @@ class Unsupervised(Compute):
             discriminator_y_confidence_fake = torch.mean(F.softmax(dy_fake)[:, 1])
             softmaxCEL = torch.nn.CrossEntropyLoss()
             loss_discriminator = softmaxCEL(dy_true, class_true) + \
-                softmaxCEL(dy_fake, class_fake)
+                                 softmaxCEL(dy_fake, class_fake)
             loss_generator = softmaxCEL(dy_fake, class_true)
             loss_total = loss_total + loss_discriminator + loss_generator
             dirich_entropy = torch.mean(torch.sum(- y_true * torch.log(y_true + eps), dim=1))
@@ -260,12 +268,12 @@ class Unsupervised(Compute):
         latent_v = torch.mean(y_onehot_u_softmax, dim=0)
 
         return torch.mean(loss_discriminator).item(), torch.mean(loss_generator).item(), \
-            torch.mean(loss_reconstruction).item(), \
-            torch.mean(discriminator_z_confidence_true).item(), \
-            torch.mean(discriminator_z_confidence_fake).item(), \
-            torch.mean(discriminator_y_confidence_true).item(), \
-            torch.mean(discriminator_y_confidence_fake).item(), \
-            latent_max.numpy(), latent_entropy.item(), latent_v.numpy(), dirich_entropy.item()
+               torch.mean(loss_reconstruction).item(), \
+               torch.mean(discriminator_z_confidence_true).item(), \
+               torch.mean(discriminator_z_confidence_fake).item(), \
+               torch.mean(discriminator_y_confidence_true).item(), \
+               torch.mean(discriminator_y_confidence_fake).item(), \
+               latent_max.numpy(), latent_entropy.item(), latent_v.numpy(), dirich_entropy.item()
 
     def test_synthetic_op(self):
         batch_size = self.args['batch_size']
@@ -380,6 +388,7 @@ class Unsupervised(Compute):
             # softmaxCEL = gluon.loss.SoftmaxCrossEntropyLoss(sparse_label=False)
             def cross_entropy_soft_targets(pred, soft_targets):
                 return torch.sum(- soft_targets * F.log_softmax(pred, dim=1), dim=1)
+
             softmaxCEL = cross_entropy_soft_targets
 
             for batch in batch_iter:
@@ -405,23 +414,20 @@ class Unsupervised(Compute):
     def save_latent(self, saveto):
         before_softmax = True
         try:
-            if type(self.data.data['train']) is np.ndarray:
-                dataset_train = TensorDataset(self.data.data['train'])
-                train_data = DataLoader(dataset_train, self.args['batch_size'], shuffle=False,
-                                        drop_last=True)
+            dataset_train = TensorDataset(self.data.data['train'])
+            train_data = DataLoader(dataset_train, self.args['batch_size'], shuffle=False,
+                                    drop_last=True)
 
-                dataset_val = TensorDataset(self.data.data['valid'])
-                val_data = DataLoader(dataset_val, self.args['batch_size'], shuffle=False,
-                                      drop_last=True)
+            dataset_val = TensorDataset(self.data.data['valid'])
+            val_data = DataLoader(dataset_val, self.args['batch_size'], shuffle=False,
+                                  drop_last=True)
 
-                dataset_test = TensorDataset(self.data.data['test'])
-                test_data = DataLoader(dataset_test, self.args['batch_size'], shuffle=False,
-                                       drop_last=True)
-            else:
-                print("Exception in Unsupervised().save_latent() in compute_op.py")
-                return
+            dataset_test = TensorDataset(self.data.data['test'])
+            test_data = DataLoader(dataset_test, self.args['batch_size'], shuffle=False,
+                                   drop_last=True)
         except:
             print("Loading error during save_latent. Probably caused by not having validation or test set!")
+            print("Exception in Unsupervised().save_latent() in compute_op.py")
             return
 
         train_output = np.zeros((self.data.data['train'].shape[0], self.ndim_y))

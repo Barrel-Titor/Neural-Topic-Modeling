@@ -1,5 +1,5 @@
 import json
-
+import os
 import numpy as np
 
 from utils import (
@@ -15,9 +15,9 @@ def softmax(x, axis=0):
     return e_x / e_x.sum(axis=axis, keepdims=True)
 
 class ProcessedData(Data):
-    def __init__(self, batch_size, data_path='', ctx=None, saveto='', **kwargs):
+    def __init__(self, batch_size, data_path='', device='cuda:0', saveto='', **kwargs):
         self.saveto = saveto
-        super(ProcessedData, self).__init__(batch_size, data_path, ctx)
+        super(ProcessedData, self).__init__(batch_size, data_path, device)
 
     def load(self, path, features='BoW', match_avitm=True):
         if path[:2] == '~/':
@@ -54,11 +54,11 @@ class ProcessedData(Data):
 
 
 class KDProcessedData(Data):
-    def __init__(self, batch_size, data_path, logit_path, logit_clip=None, ctx=None, saveto='', **kwargs):
+    def __init__(self, batch_size, data_path, logit_path, logit_clip=None, device='cuda:0', saveto='', **kwargs):
         self.saveto = saveto
         self.logit_path = logit_path
         self.logit_clip = logit_clip
-        super(KDProcessedData, self).__init__(batch_size, data_path, ctx)
+        super(KDProcessedData, self).__init__(batch_size, data_path, device)
 
     def load(self, data_path, features='BoW', match_avitm=True):
 

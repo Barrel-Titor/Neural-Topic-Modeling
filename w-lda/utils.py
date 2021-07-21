@@ -19,13 +19,14 @@ import os
 import json
 from functools import reduce
 import numpy as np
+import torch
 from scipy.special import logit
 import scipy.sparse as sparse
 import matplotlib as mpl
 # mpl.use('Agg')
 # import matplotlib.pyplot as plt
 from tqdm import tqdm
-import mxnet as mx
+# import mxnet as mx
 # from sklearn.neighbors import NearestNeighbors
 # from IPython import embed
 import collections
@@ -104,15 +105,17 @@ def compute_npmi_at_n_during_training(beta, ref_counts, n=10, smoothing=0.0):
 
 
 def gpu_helper(gpu):
-    if gpu >= 0 and gpu_exists(gpu):
-        model_ctx = mx.gpu(gpu)
-    else:
-        model_ctx = mx.cpu()
-    return model_ctx
+    # if gpu >= 0 and gpu_exists(gpu):
+    #     model_ctx = mx.gpu(gpu)
+    # else:
+    #     model_ctx = mx.cpu()
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    return device
 
 def gpu_exists(gpu):
     try:
-        mx.nd.zeros((1,), ctx=mx.gpu(gpu))
+        # mx.nd.zeros((1,), ctx=mx.gpu(gpu))
+        torch.zeros((1,), device="cuda:0")
     except:
         return False
     return True
@@ -145,13 +148,13 @@ def get_topic_words_decoder_weights(D, data, ctx, k=10, decoder_weights=False):
     else:
         y = D.y_as_topics()
         params = D(y.copyto(ctx))
-    top_word_ids = mx.nd.argsort(params, axis=1, is_ascend=False)[:,:k].asnumpy()
+    top_word_ids = torch.argsort(params, dim=1, descending=False)[:, :k].numpy()
     if hasattr(data, 'id_to_word'):
         top_word_strings = [[data.id_to_word[int(w)] for w in topic] for topic in top_word_ids]
     else:
         top_word_strings = [[data.maps['dim2vocab'][int(w)] for w in topic] for topic in top_word_ids]
 
-    return top_word_strings, params.asnumpy()
+    return top_word_strings, params.numpy()
 
 
 def get_topic_words(D, data, ctx, k=10):
@@ -160,7 +163,7 @@ def get_topic_words(D, data, ctx, k=10):
         params = D(y.copyto(ctx), z.copyto(ctx))
     else:
         params = D(y.copyto(ctx), None)
-    top_word_ids = mx.nd.argsort(params, axis=1, is_ascend=False)[:,:k].asnumpy()
+    top_word_ids = torch.argsort(params, dim=1, descending=False)[:, :k].numpy()
     if hasattr(data, 'id_to_word'):
         top_word_strings = [[data.id_to_word[int(w)] for w in topic] for topic in top_word_ids]
     else:
@@ -280,7 +283,7 @@ def print_topic_with_scores(topic_json, **kwargs):
     header_str = 'Avg scores: '
     for dn in dict_names:
         assert isinstance(kwargs[dn], dict)
-        header_str += '{}: {:.2f} '.format(dn, mean_dict(kwargs[dn]))
+        # header_str += '{}: {:.2f} '.format(dn, mean_dict(kwargs[dn]))
     for k in topic_keys:
         score_str = []
         for dn in dict_names:
